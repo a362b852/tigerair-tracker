@@ -33,6 +33,7 @@ const DESTINATIONS = {
   NGS: "長崎", MMY: "宮古島", ISG: "石垣島", SHM: "南紀白濱", HSG: "佐賀",
   KCZ: "高知", TKS: "德島", YGJ: "米子", IZO: "出雲", GAJ: "山形",
   FKS: "福島", HNA: "花卷", AKJ: "旭川", KUH: "釧路", OBO: "帶廣",
+  KMI: "宮崎", TTJ: "鳥取",
   // 韓國
   ICN: "首爾仁川", GMP: "首爾金浦", PUS: "釜山", CJU: "濟州", TAE: "大邱",
   CJJ: "清州", MWX: "務安", KWJ: "光州", YNY: "襄陽", RSU: "麗水", USN: "蔚山",
