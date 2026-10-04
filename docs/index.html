@@ -65,7 +65,6 @@
   .book { display: inline-block; padding: 4px 10px; border-radius: 6px; background: var(--accent); color: #fff;
     text-decoration: none; font-size: .8125rem; font-weight: 600; }
   .book:hover { filter: brightness(1.1); }
-  .tax { font-weight: 600; }
   .day.blank { background: none; }
   .day.best { outline: 2px solid var(--text); outline-offset: -2px; }
   .legend { display: flex; align-items: center; gap: 6px; font-size: .75rem; color: var(--muted); margin-top: 8px; flex-wrap: wrap; }
@@ -104,7 +103,7 @@
       <p class="sub" id="tripHint" style="margin-top:0"></p>
       <div class="table-wrap"><table>
         <thead><tr>
-          <th>目的地</th><th class="num">來回票價</th><th class="num">含稅約</th><th>去程</th><th>回程</th><th class="num">天數</th><th></th>
+          <th>目的地</th><th class="num">未稅票價</th><th class="num">含稅約</th><th>去程</th><th>回程</th><th class="num">天數</th><th></th>
         </tr></thead>
         <tbody id="tripBody"></tbody>
       </table></div>
@@ -207,7 +206,11 @@ function combosFor(cityKey, f) {
         for (const y of codes) {
           const back = D.prices[`${y}-${D.origin}`]?.[j];
           if (back == null) continue;
-          out.push({ city: cityKey, x, y, i, j, n, go: go[i], back, total: go[i] + back });
+          const total = go[i] + back;
+          const goT = withTax(`${D.origin}-${x}`, go[i]), backT = withTax(`${y}-${D.origin}`, back);
+          // 有稅費資料就用含稅價比較，沒有就用票價
+          const all = goT != null && backT != null ? goT + backT : null;
+          out.push({ city: cityKey, x, y, i, j, n, go: go[i], back, total, all, cmp: all ?? total });
         }
       }
     }
@@ -221,7 +224,7 @@ function renderTrips() {
   if (f.city) {
     // 單一城市：同一組日期只留最便宜的機場組合，列出前 30 名
     const seen = new Set();
-    for (const c of combosFor(f.city, f).sort((a, b) => a.total - b.total || a.i - b.i)) {
+    for (const c of combosFor(f.city, f).sort((a, b) => a.cmp - b.cmp || a.i - b.i)) {
       const k = c.i + "_" + c.j; if (seen.has(k)) continue; seen.add(k); rows.push(c);
       if (rows.length >= 30) break;
     }
@@ -229,22 +232,21 @@ function renderTrips() {
   } else {
     for (const [k, c] of Object.entries(cities)) {
       if (f.country && c.country !== f.country) continue;
-      const best = combosFor(k, f).reduce((b, c) => (!b || c.total < b.total || (c.total === b.total && c.i < b.i) ? c : b), null);
+      const best = combosFor(k, f).reduce((b, c) => (!b || c.cmp < b.cmp || (c.cmp === b.cmp && c.i < b.i) ? c : b), null);
       if (best) rows.push(best);
     }
-    rows.sort((a, b) => a.total - b.total);
+    rows.sort((a, b) => a.cmp - b.cmp);
     $("tripHint").textContent = `每個目的地在 ${f.min}～${f.max} 天內最便宜的來回，點一列可看該地所有日期組合`;
   }
   $("tripEmpty").hidden = rows.length > 0;
   $("tripBody").innerHTML = rows.map((c) => {
     const place = c.x === c.y ? apName(c.x) : `${apName(c.x)}去・${apName(c.y)}回`;
     const outKey = `${D.origin}-${c.x}`, inKey = `${c.y}-${D.origin}`;
-    const goT = withTax(outKey, c.go), backT = withTax(inKey, c.back);
     const url = bookUrl(outKey, dates[c.i], inKey, dates[c.j]);
     return `<tr data-city="${esc(c.city)}" data-code="${c.x}">
       <td>${esc(place)}</td>
-      <td class="num price">${fmt(c.total)}</td>
-      <td class="num tax">${goT != null && backT != null ? fmt(goT + backT) : '<span class="sub">—</span>'}</td>
+      <td class="num">${fmt(c.total)}</td>
+      <td class="num price">${c.all != null ? fmt(c.all) : '<span class="sub">—</span>'}</td>
       <td>${dayLabel(dates[c.i])} <span class="sub">${fmt(c.go)}</span></td>
       <td>${dayLabel(dates[c.j])} <span class="sub">${fmt(c.back)}</span></td>
       <td class="num">${c.n}</td>
