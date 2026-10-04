@@ -393,7 +393,8 @@ function showDay(i) {
   const box = $("dayDetail");
   const [o, d] = key.split("-");
   const route = `${o === D.origin ? "桃園" : apName(o)} → ${d === D.origin ? "桃園" : apName(d)}`;
-  const hist = (HIST?.routes?.[key]?.[date] ?? []).filter(([, p]) => p !== undefined);
+  // 今天的最低價可能暫時和前一天相同（明天 tracker 會清掉），不算變動
+  const hist = (HIST?.routes?.[key]?.[date] ?? []).filter(([, p], k, a) => k === 0 || p !== a[k - 1][1]);
   const known = hist.map(([, p]) => p).filter((p) => p != null);
   const items = hist.map(([day, p], k) => {
     const prev = hist[k - 1]?.[1];
