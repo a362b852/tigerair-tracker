@@ -44,8 +44,16 @@ const ALLOWED_HOSTS = new Set(["api-book.tigerairtw.com", "api.github.com"]);
 const MAX_BYTES = 20 * 1024 * 1024;
 const ISSUE_MARKER = "<!-- tigerair-tracker:notify -->";
 
+// 同一城市的不同機場，來回組合可以混搭（例如成田去、羽田回）
+const CITY = { NRT: "東京", HND: "東京", ICN: "首爾", GMP: "首爾" };
+const cityOf = (code) => CITY[code] ?? code;
+
+// 沒有 trips.json 時的預設行程
+const DEFAULT_TRIPS = [{ 名稱: "5天", 天數: 5 }];
+
 const STATE_FILE = new URL("./data/state.json", import.meta.url);
 const REPORT_FILE = new URL("./REPORT.md", import.meta.url);
+const TRIPS_FILE = new URL("./trips.json", import.meta.url);
 
 const args = process.argv.slice(2);
 const DRY = args.includes("--dry");
@@ -180,9 +188,94 @@ function analyse(legs, state, today) {
   return { rows, newLows };
 }
 
+/* ============================ 來回行程 ============================ */
+
+/**
+ * 讀 trips.json，格式：
+ * [
+ *   { "名稱": "5天", "天數": 5 },
+ *   { "名稱": "跨年", "天數": "4-6", "最早出發": "2026-12-26", "最晚出發": "2027-01-02" }
+ * ]
+ * 天數算法：去程那天算第 1 天，回程那天算最後一天（5 天 = 5 天 4 夜）。
+ */
+function loadTrips() {
+  const raw = existsSync(TRIPS_FILE) ? JSON.parse(readFileSync(TRIPS_FILE, "utf8")) : DEFAULT_TRIPS;
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > 10) throw new Error("trips.json 要是 1～10 個行程的陣列");
+  const names = new Set();
+  return raw.map((t, i) => {
+    const where = `trips.json 第 ${i + 1} 個行程`;
+    // 名稱只留中英文、數字、空白、-、_，避免塞進 Issue 時變成連結或標記
+    const name = String(t?.名稱 ?? `行程${i + 1}`).replace(/[^\p{L}\p{N} _-]/gu, "").trim().slice(0, 20);
+    if (!name || names.has(name)) throw new Error(`${where}：名稱空白或重複`);
+    names.add(name);
+    const m = String(t.天數 ?? "").trim().match(/^(\d{1,2})(?:\s*-\s*(\d{1,2}))?$/);
+    if (!m) throw new Error(`${where}：天數要寫成 5 或 "4-6"`);
+    const minDays = Number(m[1]), maxDays = Number(m[2] ?? m[1]);
+    if (minDays < 2 || maxDays > 30 || minDays > maxDays) throw new Error(`${where}：天數要在 2～30 之間`);
+    const earliest = t.最早出發 ?? null, latest = t.最晚出發 ?? null;
+    for (const d of [earliest, latest]) if (d !== null && !DATE_RE.test(d)) throw new Error(`${where}：日期格式要是 YYYY-MM-DD`);
+    return { name, minDays, maxDays, earliest, latest };
+  });
+}
+
+const tripDaysLabel = (t) => (t.minDays === t.maxDays ? `${t.minDays} 天` : `${t.minDays}～${t.maxDays} 天`);
+
+/** 找出每個目的地（城市）在這個行程條件下最便宜的來回組合 */
+function roundTrips(legs, trip, from, to) {
+  const best = {};
+  const outKeys = Object.keys(legs).filter((k) => k.startsWith(`${ORIGIN}-`));
+  const inKeys = Object.keys(legs).filter((k) => k.endsWith(`-${ORIGIN}`));
+  for (const ok of outKeys) {
+    const x = ok.split("-")[1];
+    const backs = inKeys.map((k) => k.split("-")[0]).filter((y) => cityOf(y) === cityOf(x));
+    for (const [dep, outPrice] of Object.entries(legs[ok])) {
+      if (dep < from || dep > to) continue;
+      if (trip.earliest && dep < trip.earliest) continue;
+      if (trip.latest && dep > trip.latest) continue;
+      for (let n = trip.minDays; n <= trip.maxDays; n++) {
+        const ret = addDays(dep, n - 1);
+        for (const y of backs) {
+          const retPrice = legs[`${y}-${ORIGIN}`]?.[ret];
+          if (retPrice == null) continue;
+          const total = outPrice + retPrice;
+          const city = cityOf(x);
+          const cur = best[city];
+          if (!cur || total < cur.total || (total === cur.total && dep < cur.dep)) {
+            best[city] = { city, x, y, dep, ret, days: n, outPrice, retPrice, total };
+          }
+        }
+      }
+    }
+  }
+  return Object.values(best).sort((a, b) => a.total - b.total);
+}
+
+const comboLabel = (c) => (c.x === c.y ? name(c.x) : `${name(c.x)}去 ${name(c.y)}回`);
+
+function analyseTrips(legs, trips, state, from, to) {
+  state.tripLows ??= {};
+  const results = [];
+  const newLows = [];
+  for (const trip of trips) {
+    const combos = roundTrips(legs, trip, from, to);
+    for (const c of combos) {
+      const key = `${trip.name}|${trip.minDays}-${trip.maxDays}|${trip.earliest ?? ""}|${trip.latest ?? ""}|${c.city}`;
+      const prev = state.tripLows[key];
+      if (!prev) state.tripLows[key] = { total: c.total, dep: c.dep };
+      else if (c.total < prev.total) {
+        newLows.push({ trip, ...c, was: prev.total });
+        state.tripLows[key] = { total: c.total, dep: c.dep };
+      }
+      c.low = state.tripLows[key].total;
+    }
+    results.push({ trip, combos });
+  }
+  return { results, newLows };
+}
+
 /* ============================ 報表 ============================ */
 
-function buildReport(legs, rows, seenOther, from, to, stamp) {
+function buildReport(legs, rows, seenOther, from, to, stamp, tripResults) {
   const out = [
     "# 虎航票價追蹤：桃園 ↔ 日本・韓國",
     "",
@@ -191,6 +284,16 @@ function buildReport(legs, rows, seenOther, from, to, stamp) {
     "> 價格是虎航官網日曆上的單程最低票價（新台幣），**未含稅金與附加費用**，實際以官網訂票頁為準。",
     "",
   ];
+  for (const { trip, combos } of tripResults) {
+    const range = trip.earliest || trip.latest ? `，${trip.earliest ?? "今天"} ～ ${trip.latest ?? to} 出發` : "";
+    out.push(`## 來回：${trip.name}（${tripDaysLabel(trip)}${range}）`, "");
+    if (!combos.length) { out.push("目前沒有符合條件的來回組合。", ""); continue; }
+    out.push("| 目的地 | 來回總價 | 去程 | 回程 | 天數 | 歷史最低 |", "|---|---:|---|---|---:|---:|");
+    for (const c of combos.slice(0, 20)) {
+      out.push(`| ${comboLabel(c)} | **${fmt(c.total)}** | ${c.dep}（${fmt(c.outPrice)}） | ${c.ret}（${fmt(c.retPrice)}） | ${c.days} | ${fmt(c.low)} |`);
+    }
+    out.push("");
+  }
   const table = (title, filter) => {
     const list = rows.filter(filter).sort((a, b) => a.price - b.price);
     if (!list.length) return;
@@ -213,18 +316,28 @@ function buildReport(legs, rows, seenOther, from, to, stamp) {
   return out.join("\n");
 }
 
-function newLowMessage(newLows, owner) {
+function newLowMessage(newLows, tripLows, owner) {
   const lines = [ISSUE_MARKER, `@${owner} **偵測到新低價**`, ""];
-  for (const n of newLows.sort((a, b) => a.price - b.price)) {
-    lines.push(`- ${routeLabel(n.key)}：**${fmt(n.price)}**（${n.date} 出發），之前最低 ${fmt(n.was)}`);
+  for (const n of [...tripLows].sort((a, b) => a.total - b.total)) {
+    lines.push(`- 來回「${n.trip.name}」${comboLabel(n)}：**${fmt(n.total)}**（${n.dep} 去、${n.ret} 回，${n.days} 天），之前最低 ${fmt(n.was)}`);
+  }
+  for (const n of [...newLows].sort((a, b) => a.price - b.price)) {
+    lines.push(`- 單程 ${routeLabel(n.key)}：**${fmt(n.price)}**（${n.date} 出發），之前最低 ${fmt(n.was)}`);
   }
   lines.push("", "（未含稅，請到虎航官網確認）");
   return lines.join("\n");
 }
 
-function summaryMessage(rows, owner, today) {
-  const out = rows.filter((r) => r.key.startsWith(`${ORIGIN}-`)).sort((a, b) => a.price - b.price).slice(0, 10);
-  const lines = [ISSUE_MARKER, `@${owner} **每日摘要 ${today}**：桃園出發最便宜的 ${out.length} 條航線`, ""];
+function summaryMessage(rows, tripResults, owner, today) {
+  const lines = [ISSUE_MARKER, `@${owner} **每日摘要 ${today}**`, ""];
+  for (const { trip, combos } of tripResults) {
+    lines.push(`**來回「${trip.name}」（${tripDaysLabel(trip)}）最便宜 5 個：**`);
+    if (!combos.length) lines.push("- 目前沒有符合條件的組合");
+    for (const c of combos.slice(0, 5)) lines.push(`- ${comboLabel(c)}：${fmt(c.total)}（${c.dep} 去、${c.ret} 回）`);
+    lines.push("");
+  }
+  const out = rows.filter((r) => r.key.startsWith(`${ORIGIN}-`)).sort((a, b) => a.price - b.price).slice(0, 5);
+  lines.push("**單程桃園出發最便宜 5 條：**");
   for (const r of out) lines.push(`- ${routeLabel(r.key)}：${fmt(r.price)}（${r.date}）`);
   lines.push("", "完整表格請看 repo 裡的 REPORT.md。");
   return lines.join("\n");
@@ -271,19 +384,21 @@ async function main() {
     ? JSON.parse(readFileSync(STATE_FILE, "utf8"))
     : { lows: {}, daily: {}, issue: null, lastSummary: null };
   const firstRun = Object.keys(state.lows).length === 0;
+  const trips = loadTrips(); // 先讀設定，格式錯就在抓價前停下
 
   const { legs, seenOther } = await fetchAll(from, to);
   const { rows, newLows } = analyse(legs, state, today);
+  const { results: tripResults, newLows: tripLows } = analyseTrips(legs, trips, state, from, to);
   state.lastRun = `${today} ${tp.time}`;
 
   const owner = (process.env.GITHUB_REPOSITORY_OWNER ?? "").replace(/[^\w-]/g, "") || "owner";
   const messages = [];
-  if (newLows.length && !firstRun) messages.push(newLowMessage(newLows, owner));
+  if ((newLows.length || tripLows.length) && !firstRun) messages.push(newLowMessage(newLows, tripLows, owner));
   const wantSummary = FORCE_SUMMARY || firstRun || (state.lastSummary !== today && tp.hour >= SUMMARY_HOUR);
-  if (wantSummary) messages.push(summaryMessage(rows, owner, today));
+  if (wantSummary) messages.push(summaryMessage(rows, tripResults, owner, today));
 
-  const report = buildReport(legs, rows, seenOther, from, to, `${today} ${tp.time}`);
-  console.log(`抓到 ${Object.keys(legs).length} 條航線，新低 ${newLows.length} 條，要發 ${messages.length} 則通知`);
+  const report = buildReport(legs, rows, seenOther, from, to, `${today} ${tp.time}`, tripResults);
+  console.log(`抓到 ${Object.keys(legs).length} 條航線，單程新低 ${newLows.length}、來回新低 ${tripLows.length}，要發 ${messages.length} 則通知`);
 
   if (DRY) {
     console.log("\n----- 試跑：不寫檔、不發通知 -----\n");
