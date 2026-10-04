@@ -145,7 +145,7 @@ let cities = {};       // city -> { label, country, codes: [] }
 function addDays(iso, n) {
   const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10);
 }
-const dayLabel = (iso) => `${iso.slice(5).replace("-", "/")}（${WD[new Date(iso + "T00:00:00Z").getUTCDay()]}）`;
+const dayLabel = (iso) => `${iso.replaceAll("-", "/")}（${WD[new Date(iso + "T00:00:00Z").getUTCDay()]}）`;
 const apName = (code) => D.airports[code]?.name ?? code;
 
 function setup() {
