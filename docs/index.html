@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>虎航票價追蹤</title>
+<meta name="description" content="桃園 ↔ 日本、韓國虎航最低票價，每小時更新">
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d232b; --muted: #677281; --line: #e3e6ea;
+    --accent: #e8590c; --accent-soft: #fff1e8; --good: #2b8a3e; --bad: #c92a2a;
+    --h0: #2f9e44; --h1: #8ac926; --h2: #f2c94c; --h3: #f08c3a; --h4: #e03131; --none: #eef0f3;
+    --heat-text: #10151b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161b; --card: #1b2128; --text: #e7ebef; --muted: #96a1ad; --line: #2c343d;
+      --accent: #ff8a3d; --accent-soft: #3a2616; --good: #51cf66; --bad: #ff6b6b; --none: #232a32;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", "Microsoft JhengHei", sans-serif; line-height: 1.5; }
+  main { max-width: 1000px; margin: 0 auto; padding: 16px; }
+  header h1 { margin: 8px 0 2px; font-size: 1.5rem; }
+  header h1 span { color: var(--accent); }
+  .meta { color: var(--muted); font-size: .875rem; margin: 0 0 16px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+  .tabs button { border: 0; background: none; color: var(--muted); font: inherit; font-weight: 600;
+    padding: 10px 14px; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -1px; }
+  .tabs button[aria-selected="true"] { color: var(--accent); border-color: var(--accent); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: .8125rem; color: var(--muted); }
+  input, select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 9px; width: 100%; min-width: 0; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: var(--bg); color: var(--text); font: inherit; padding: 7px 12px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .9375rem; }
+  th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { font-size: .75rem; color: var(--muted); font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--accent-soft); }
+  .price { font-weight: 700; color: var(--accent); }
+  .sub { color: var(--muted); font-size: .8125rem; }
+  .low { color: var(--good); font-weight: 600; font-size: .75rem; margin-left: 4px; }
+  .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+  .cal-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 8px; }
+  .cal-head label { flex: 1 1 180px; }
+  .stats { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: .875rem; margin: 8px 0 4px; }
+  .stats b { color: var(--accent); }
+  .months { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 20px; margin-top: 12px; }
+  .month h3 { font-size: .9375rem; margin: 0 0 6px; }
+  .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+  .dow { font-size: .6875rem; color: var(--muted); text-align: center; }
+  .day { border-radius: 6px; min-height: 42px; padding: 3px 2px; text-align: center; font-size: .6875rem;
+    background: var(--none); color: var(--muted); display: flex; flex-direction: column; justify-content: center; }
+  .day .d { font-size: .6875rem; opacity: .8; }
+  .day .p { font-weight: 700; font-size: .75rem; font-variant-numeric: tabular-nums; }
+  .day.has { color: var(--heat-text); }
+  .day.blank { background: none; }
+  .day.best { outline: 2px solid var(--text); outline-offset: -2px; }
+  .legend { display: flex; align-items: center; gap: 6px; font-size: .75rem; color: var(--muted); margin-top: 8px; flex-wrap: wrap; }
+  .legend i { width: 18px; height: 12px; border-radius: 3px; display: inline-block; }
+  footer { color: var(--muted); font-size: .75rem; padding: 8px 0 24px; }
+  footer a { color: inherit; }
+  [hidden] { display: none !important; }
+  @media (max-width: 520px) {
+    th, td { padding: 8px 5px; font-size: .8125rem; }
+    .hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>虎航票價追蹤 <span>桃園 ↔ 日韓</span></h1>
+    <p class="meta" id="meta">載入中…</p>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="trip">來回最便宜</button>
+    <button role="tab" aria-selected="false" data-tab="cal">單程票價日曆</button>
+  </nav>
+
+  <section id="tab-trip">
+    <div class="card controls">
+      <label>最少天數<input type="number" id="minDays" min="2" max="30" value="4"></label>
+      <label>最多天數<input type="number" id="maxDays" min="2" max="30" value="6"></label>
+      <label>最早出發<input type="date" id="earliest"></label>
+      <label>最晚出發<input type="date" id="latest"></label>
+      <label>國家<select id="country"><option value="">全部</option><option value="JP">日本</option><option value="KR">韓國</option></select></label>
+      <label>目的地<select id="city"></select></label>
+    </div>
+    <div class="card">
+      <p class="sub" id="tripHint" style="margin-top:0"></p>
+      <div class="table-wrap"><table>
+        <thead><tr>
+          <th>目的地</th><th class="num">來回總價</th><th>去程</th><th>回程</th><th class="num">天數</th>
+        </tr></thead>
+        <tbody id="tripBody"></tbody>
+      </table></div>
+      <p class="empty" id="tripEmpty" hidden>沒有符合條件的來回組合，試試放寬天數或日期。</p>
+    </div>
+  </section>
+
+  <section id="tab-cal" hidden>
+    <div class="card">
+      <div class="cal-head">
+        <label>目的地<select id="calDest"></select></label>
+        <div class="seg" role="group" aria-label="方向">
+          <button id="dirOut" aria-pressed="true">去程</button>
+          <button id="dirIn" aria-pressed="false">回程</button>
+        </div>
+      </div>
+      <div class="stats" id="calStats"></div>
+      <div class="legend">便宜
+        <i style="background:var(--h0)"></i><i style="background:var(--h1)"></i><i style="background:var(--h2)"></i><i style="background:var(--h3)"></i><i style="background:var(--h4)"></i>
+        貴　<i style="background:var(--none)"></i> 沒有票價　（框起來的是最低價）</div>
+      <div class="months" id="months"></div>
+    </div>
+  </section>
+
+  <footer>
+    價格是虎航官網日曆上的單程最低票價（新台幣），<b>未含稅金與附加費用</b>，實際以
+    <a href="https://www.tigerairtw.com/" target="_blank" rel="noopener noreferrer">虎航官網</a>訂票頁為準。
+    資料每小時由 GitHub Actions 自動更新。
+  </footer>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => "$" + Number(n).toLocaleString("en-US");
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const WD = ["日", "一", "二", "三", "四", "五", "六"];
+
+let D = null;          // fares.json
+let dates = [];        // 第 i 天的日期字串
+let cities = {};       // city -> { label, country, codes: [] }
+
+function addDays(iso, n) {
+  const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10);
+}
+const dayLabel = (iso) => `${iso.slice(5).replace("-", "/")}（${WD[new Date(iso + "T00:00:00Z").getUTCDay()]}）`;
+const apName = (code) => D.airports[code]?.name ?? code;
+
+function setup() {
+  const span = Object.values(D.prices)[0]?.length ?? 0;
+  dates = Array.from({ length: span }, (_, i) => addDays(D.from, i));
+  for (const [code, a] of Object.entries(D.airports)) {
+    const c = (cities[a.city] ??= { label: a.city === code ? a.name : a.city, country: a.country, codes: [] });
+    c.codes.push(code);
+  }
+  $("meta").textContent = `更新時間 ${D.updated}（台北）・出發日 ${D.from} ～ ${D.to}・共 ${Object.keys(D.prices).length} 條航線`;
+  for (const id of ["earliest", "latest"]) { $(id).min = D.from; $(id).max = D.to; }
+
+  const sorted = Object.entries(cities).sort((a, b) => a[1].country.localeCompare(b[1].country) || a[1].label.localeCompare(b[1].label, "zh-Hant"));
+  $("city").innerHTML = '<option value="">全部（每個目的地最便宜）</option>' +
+    sorted.map(([k, c]) => `<option value="${esc(k)}">${esc(c.label)}</option>`).join("");
+  const codes = Object.keys(D.airports).sort((a, b) => (D.airports[a].country + apName(a)).localeCompare(D.airports[b].country + apName(b), "zh-Hant"));
+  $("calDest").innerHTML = codes.map((c) => `<option value="${c}">${esc(apName(c))}（${c}）</option>`).join("");
+}
+
+/* ---------------- 來回 ---------------- */
+
+function readTripForm() {
+  let min = Math.max(2, Math.min(30, parseInt($("minDays").value) || 2));
+  let max = Math.max(2, Math.min(30, parseInt($("maxDays").value) || min));
+  if (min > max) [min, max] = [max, min];
+  return { min, max, earliest: $("earliest").value || D.from, latest: $("latest").value || D.to,
+    country: $("country").value, city: $("city").value };
+}
+
+/** 回傳某城市所有符合條件的來回組合 */
+function combosFor(cityKey, f) {
+  const out = [];
+  const codes = cities[cityKey].codes;
+  for (const x of codes) {
+    const go = D.prices[`${D.origin}-${x}`]; if (!go) continue;
+    for (let i = 0; i < go.length; i++) {
+      if (go[i] == null || dates[i] < f.earliest || dates[i] > f.latest) continue;
+      for (let n = f.min; n <= f.max; n++) {
+        const j = i + n - 1;
+        for (const y of codes) {
+          const back = D.prices[`${y}-${D.origin}`]?.[j];
+          if (back == null) continue;
+          out.push({ city: cityKey, x, y, i, j, n, go: go[i], back, total: go[i] + back });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function renderTrips() {
+  const f = readTripForm();
+  let rows = [];
+  if (f.city) {
+    // 單一城市：同一組日期只留最便宜的機場組合，列出前 30 名
+    const seen = new Set();
+    for (const c of combosFor(f.city, f).sort((a, b) => a.total - b.total || a.i - b.i)) {
+      const k = c.i + "_" + c.j; if (seen.has(k)) continue; seen.add(k); rows.push(c);
+      if (rows.length >= 30) break;
+    }
+    $("tripHint").textContent = `${cities[f.city].label}：${f.min}～${f.max} 天最便宜的 ${rows.length} 個日期組合`;
+  } else {
+    for (const [k, c] of Object.entries(cities)) {
+      if (f.country && c.country !== f.country) continue;
+      const best = combosFor(k, f).reduce((b, c) => (!b || c.total < b.total || (c.total === b.total && c.i < b.i) ? c : b), null);
+      if (best) rows.push(best);
+    }
+    rows.sort((a, b) => a.total - b.total);
+    $("tripHint").textContent = `每個目的地在 ${f.min}～${f.max} 天內最便宜的來回，點一列可看該地所有日期組合`;
+  }
+  $("tripEmpty").hidden = rows.length > 0;
+  $("tripBody").innerHTML = rows.map((c) => {
+    const place = c.x === c.y ? apName(c.x) : `${apName(c.x)}去・${apName(c.y)}回`;
+    return `<tr data-city="${esc(c.city)}" data-code="${c.x}">
+      <td>${esc(place)}</td>
+      <td class="num price">${fmt(c.total)}</td>
+      <td>${dayLabel(dates[c.i])} <span class="sub">${fmt(c.go)}</span></td>
+      <td>${dayLabel(dates[c.j])} <span class="sub">${fmt(c.back)}</span></td>
+      <td class="num">${c.n}</td></tr>`;
+  }).join("");
+}
+
+$("tripBody").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr"); if (!tr) return;
+  if (!$("city").value) { $("city").value = tr.dataset.city; renderTrips(); window.scrollTo({ top: 0, behavior: "smooth" }); }
+  else { $("calDest").value = tr.dataset.code; setDir(true); showTab("cal"); }
+});
+for (const id of ["minDays", "maxDays", "earliest", "latest", "country", "city"]) $(id).addEventListener("input", renderTrips);
+
+/* ---------------- 日曆 ---------------- */
+
+let outbound = true;
+function setDir(out) {
+  outbound = out;
+  $("dirOut").setAttribute("aria-pressed", out); $("dirIn").setAttribute("aria-pressed", !out);
+  renderCal();
+}
+$("dirOut").onclick = () => setDir(true);
+$("dirIn").onclick = () => setDir(false);
+$("calDest").addEventListener("input", renderCal);
+
+function renderCal() {
+  const code = $("calDest").value;
+  const key = outbound ? `${D.origin}-${code}` : `${code}-${D.origin}`;
+  const arr = D.prices[key] ?? [];
+  const vals = arr.filter((v) => v != null).sort((a, b) => a - b);
+  const q = (p) => vals[Math.min(vals.length - 1, Math.floor(p * vals.length))];
+  const cuts = [q(.2), q(.4), q(.6), q(.8)];
+  const heat = (v) => `var(--h${cuts.findIndex((c) => v <= c) === -1 ? 4 : cuts.findIndex((c) => v <= c)})`;
+  const min = vals[0];
+  const low = D.lows?.[key];
+  const route = outbound ? `桃園 → ${apName(code)}` : `${apName(code)} → 桃園`;
+  $("calStats").innerHTML = !vals.length ? `<span>${esc(route)}：目前沒有票價資料</span>` :
+    `<span>${esc(route)}</span><span>目前最低 <b>${fmt(min)}</b></span>` +
+    (low ? `<span>歷史最低 ${fmt(low.price)}（${low.date}）</span>` : "") +
+    `<span>有票價 ${vals.length} 天</span>`;
+
+  const months = {};
+  dates.forEach((d, i) => (months[d.slice(0, 7)] ??= []).push(i));
+  $("months").innerHTML = Object.entries(months).map(([ym, idx]) => {
+    const first = new Date(ym + "-01T00:00:00Z").getUTCDay();
+    const startDay = Number(dates[idx[0]].slice(8));
+    let cells = WD.map((w) => `<div class="dow">${w}</div>`).join("");
+    const lead = (first + startDay - 1) % 7;
+    cells += '<div class="day blank"></div>'.repeat(lead);
+    for (const i of idx) {
+      const v = arr[i], d = Number(dates[i].slice(8));
+      cells += v == null
+        ? `<div class="day"><span class="d">${d}</span><span class="p">—</span></div>`
+        : `<div class="day has${v === min ? " best" : ""}" style="background:${heat(v)}" title="${dates[i]} ${fmt(v)}"><span class="d">${d}</span><span class="p">${(v / 1000).toFixed(1)}k</span></div>`;
+    }
+    const [y, m] = ym.split("-");
+    return `<div class="month"><h3>${y} 年 ${Number(m)} 月</h3><div class="grid">${cells}</div></div>`;
+  }).join("");
+}
+
+/* ---------------- 分頁 ---------------- */
+
+function showTab(name) {
+  document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === name));
+  $("tab-trip").hidden = name !== "trip"; $("tab-cal").hidden = name !== "cal";
+  if (name === "cal") renderCal();
+}
+document.querySelectorAll(".tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+
+fetch("fares.json", { cache: "no-cache" })
+  .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+  .then((data) => { D = data; setup(); renderTrips(); })
+  .catch((e) => { $("meta").textContent = "票價資料載入失敗（" + e.message + "），請稍後重新整理。"; });
+</script>
+</body>
+</html>

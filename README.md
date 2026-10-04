@@ -2,6 +2,7 @@
 
 每小時抓一次虎航官網日曆票價，追蹤**桃園 ↔ 日本、韓國**未來 180 天的單程最低價。
 
+- 網站：https://a362b852.github.io/tigerair-tracker/ （可自訂天數、日期，看票價日曆）
 - 最新表格：[REPORT.md](REPORT.md)
 - 通知：跌到歷史新低時，以及每天早上 8 點後的第一次執行，會在「虎航票價通知」Issue 留言，GitHub 會寄信給你。
 - 價格未含稅金與附加費用。
@@ -14,6 +15,8 @@
 | `.github/workflows/track.yml` | 每小時排程 |
 | `data/state.json` | 歷史最低價與每日紀錄（自動產生） |
 | `REPORT.md` | 票價表（自動產生） |
+| `docs/index.html` | 網站（GitHub Pages） |
+| `docs/fares.json` | 網站用的票價資料（自動產生） |
 
 ## 安全
 

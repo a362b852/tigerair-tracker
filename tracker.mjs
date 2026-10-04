@@ -38,6 +38,8 @@ const DESTINATIONS = {
   CJJ: "清州", MWX: "務安", KWJ: "光州", YNY: "襄陽", RSU: "麗水", USN: "蔚山",
 };
 
+const KOREA = new Set(["ICN", "GMP", "PUS", "CJU", "TAE", "CJJ", "MWX", "KWJ", "YNY", "RSU", "USN"]);
+
 const PRICE_API = (station) =>
   `https://api-book.tigerairtw.com/api/cms/station-daily-prices/${station}/TWD`;
 const ALLOWED_HOSTS = new Set(["api-book.tigerairtw.com", "api.github.com"]);
@@ -54,6 +56,8 @@ const DEFAULT_TRIPS = [{ 名稱: "5天", 天數: 5 }];
 const STATE_FILE = new URL("./data/state.json", import.meta.url);
 const REPORT_FILE = new URL("./REPORT.md", import.meta.url);
 const TRIPS_FILE = new URL("./trips.json", import.meta.url);
+const SITE_DIR = new URL("./docs/", import.meta.url);
+const SITE_DATA_FILE = new URL("./docs/fares.json", import.meta.url);
 
 const args = process.argv.slice(2);
 const DRY = args.includes("--dry");
@@ -316,6 +320,29 @@ function buildReport(legs, rows, seenOther, from, to, stamp, tripResults) {
   return out.join("\n");
 }
 
+/** 給網站用的資料：每條航線一個陣列，第 i 格是 from 之後第 i 天的價格（沒有航班為 null） */
+function buildSiteData(legs, state, from, to, stamp) {
+  const span = Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000) + 1;
+  const prices = {};
+  for (const key of Object.keys(legs).sort()) {
+    const arr = new Array(span).fill(null);
+    for (const [date, price] of Object.entries(legs[key])) {
+      const i = Math.round((Date.parse(date) - Date.parse(from)) / 86_400_000);
+      if (i >= 0 && i < span) arr[i] = price;
+    }
+    prices[key] = arr;
+  }
+  const airports = {};
+  for (const key of Object.keys(legs)) {
+    for (const code of key.split("-")) {
+      if (code !== ORIGIN) airports[code] = { name: name(code), city: cityOf(code), country: KOREA.has(code) ? "KR" : "JP" };
+    }
+  }
+  const lows = {};
+  for (const key of Object.keys(legs)) if (state.lows[key]) lows[key] = { date: state.lows[key].date, price: state.lows[key].price };
+  return { updated: stamp, from, to, origin: ORIGIN, airports, prices, lows };
+}
+
 function newLowMessage(newLows, tripLows, owner) {
   const lines = [ISSUE_MARKER, `@${owner} **偵測到新低價**`, ""];
   for (const n of [...tripLows].sort((a, b) => a.total - b.total)) {
@@ -418,6 +445,8 @@ async function main() {
   mkdirSync(new URL("./data/", import.meta.url), { recursive: true });
   writeFileSync(STATE_FILE, JSON.stringify(state, null, 1) + "\n");
   writeFileSync(REPORT_FILE, report + "\n");
+  mkdirSync(SITE_DIR, { recursive: true });
+  writeFileSync(SITE_DATA_FILE, JSON.stringify(buildSiteData(legs, state, from, to, `${today} ${tp.time}`)) + "\n");
   if (notifyError) throw new Error(`通知失敗：${notifyError.message}`);
 }
 
