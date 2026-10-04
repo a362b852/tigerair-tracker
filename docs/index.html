@@ -24,7 +24,10 @@
   main { max-width: 1000px; margin: 0 auto; padding: 16px; }
   header h1 { margin: 8px 0 2px; font-size: 1.5rem; }
   header h1 span { color: var(--accent); }
-  .meta { color: var(--muted); font-size: .875rem; margin: 0 0 16px; }
+  .meta { color: var(--muted); font-size: .875rem; margin: 0 0 8px; }
+  .plan { background: var(--accent-soft); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px;
+    font-size: .8125rem; margin: 0 0 16px; }
+  .plan b { color: var(--accent); }
   .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
   .tabs button { border: 0; background: none; color: var(--muted); font: inherit; font-weight: 600;
     padding: 10px 14px; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -1px; }
@@ -83,6 +86,8 @@
   <header>
     <h1>虎航票價追蹤 <span>桃園 ↔ 日韓</span></h1>
     <p class="meta" id="meta">載入中…</p>
+    <p class="plan">所有價格都是 <b>tigerlight 方案</b>（最便宜的基本票，只含 10 公斤手提行李，<b>不含託運行李、選位、餐點</b>），1 位成人、每天最便宜的那一班。
+      要託運行李請在訂票時改選 tigersmart 或 tigerpro，價格會再增加。</p>
   </header>
 
   <nav class="tabs" role="tablist">
@@ -129,7 +134,7 @@
   </section>
 
   <footer>
-    價格是虎航官網日曆上當天最便宜航班的票價（新台幣，等同 tigerlight，只含 10 公斤手提行李），<b>未含稅金與附加費用</b>。
+    價格是虎航官網日曆上當天最便宜航班的票價（新台幣，tigerlight 方案，只含 10 公斤手提行李），<b>未含稅金與附加費用</b>。
     「含稅約」是用各航線實際查過一次的「稅金與其他費用」估算，會因旺季、匯率、燃油附加費調整而有出入。實際以
     <a href="https://www.tigerairtw.com/" target="_blank" rel="noopener noreferrer">虎航官網</a>訂票頁為準。
     資料每小時由 GitHub Actions 自動更新。
@@ -286,7 +291,7 @@ function renderCal() {
   const low = D.lows?.[key];
   const route = outbound ? `桃園 → ${apName(code)}` : `${apName(code)} → 桃園`;
   $("calStats").innerHTML = !vals.length ? `<span>${esc(route)}：目前沒有票價資料</span>` :
-    `<span>${esc(route)}</span><span>目前最低 <b>${fmt(min)}</b></span>` +
+    `<span>${esc(route)}（tigerlight）</span><span>目前最低 <b>${fmt(min)}</b></span>` +
     (low ? `<span>歷史最低 ${fmt(low.price)}（${low.date}）</span>` : "") +
     (TAX[key] != null ? `<span>稅費約 ${fmt(TAX[key])}（含稅最低約 <b>${fmt(min + TAX[key])}</b>）</span>` : "") +
     `<span>有票價 ${vals.length} 天</span>`;
