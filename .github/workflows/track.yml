@@ -1,0 +1,57 @@
+name: 虎航票價追蹤
+
+on:
+  schedule:
+    - cron: "23 * * * *" # 每小時第 23 分（UTC），避開整點尖峰
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: "試跑：只抓價印出結果，不存檔、不發通知"
+        type: boolean
+        default: false
+      summary:
+        description: "強制發一次每日摘要（測試通知信用）"
+        type: boolean
+        default: false
+
+# 最小權限：contents 用來存價格紀錄，issues 用來發通知留言。其他一律沒有。
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: tigerair-tracker
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # GitHub 官方 checkout，釘在固定 commit（v5.0.1），避免版本標籤被改掉
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      # 使用 runner 內建的 Node，不安裝任何套件
+      - name: 抓價、比較、通知
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY: ${{ inputs.dry && '--dry' || '' }}
+          SUMMARY: ${{ inputs.summary && '--summary' || '' }}
+        run: |
+          node --version
+          node tracker.mjs $DRY $SUMMARY
+
+      - name: 存檔
+        if: ${{ !cancelled() && !inputs.dry }}
+        run: |
+          set -euo pipefail
+          git config user.name "fare-tracker-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/state.json REPORT.md 2>/dev/null || true
+          if git diff --cached --quiet; then echo "沒有變動"; exit 0; fi
+          git commit -q -m "更新票價 $(TZ=Asia/Taipei date '+%m-%d %H:%M')"
+          for i in 1 2 3; do
+            git push && exit 0
+            git pull --rebase origin "$GITHUB_REF_NAME"
+          done
+          exit 1
