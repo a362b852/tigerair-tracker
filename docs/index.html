@@ -28,6 +28,21 @@
   .plan { background: var(--accent-soft); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px;
     font-size: .8125rem; margin: 0 0 16px; }
   .plan b { color: var(--accent); }
+  .plan p { margin: 6px 0 0; }
+  .plan-pick { flex-direction: row; align-items: center; gap: 8px; color: var(--text); font-weight: 600; font-size: .875rem; }
+  .plan-pick select { width: auto; flex: 1; max-width: 420px; font-weight: 400; }
+  .chg { font-size: .75rem; font-weight: 600; white-space: nowrap; }
+  .chg.down { color: var(--good); }
+  .chg.up { color: var(--bad); }
+  button.day { border: 0; font: inherit; cursor: pointer; }
+  button.day.has:hover, button.day.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .day .p small { font-size: .625rem; }
+  .detail { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-top: 12px; background: var(--bg); }
+  .detail h3 { margin: 0 0 6px; font-size: 1rem; }
+  .detail .now { font-size: 1.25rem; font-weight: 700; color: var(--accent); }
+  .detail ol { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .8125rem; }
+  .detail ol li { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .detail .row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: .875rem; }
   .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
   .tabs button { border: 0; background: none; color: var(--muted); font: inherit; font-weight: 600;
     padding: 10px 14px; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -1px; }
@@ -86,8 +101,16 @@
   <header>
     <h1>虎航票價追蹤 <span>桃園 ↔ 日韓</span></h1>
     <p class="meta" id="meta">載入中…</p>
-    <p class="plan">所有價格都是 <b>tigerlight 方案</b>（最便宜的基本票，只含 10 公斤手提行李，<b>不含託運行李、選位、餐點</b>），1 位成人、每天最便宜的那一班。
-      要託運行李請在訂票時改選 tigersmart 或 tigerpro，價格會再增加。</p>
+    <div class="plan">
+      <label class="plan-pick">票價方案
+        <select id="plan">
+          <option value="tigerlight">tigerlight：只有 10 公斤手提</option>
+          <option value="tigersmart">tigersmart：加 20 公斤託運、免費選一般座位</option>
+          <option value="tigerpro">tigerpro：加 20 公斤託運、任選座位、餐點、免費改期一次</option>
+        </select>
+      </label>
+      <p id="planNote"></p>
+    </div>
   </header>
 
   <nav class="tabs" role="tablist">
@@ -128,14 +151,17 @@
       <div class="stats" id="calStats"></div>
       <div class="legend">便宜
         <i style="background:var(--h0)"></i><i style="background:var(--h1)"></i><i style="background:var(--h2)"></i><i style="background:var(--h3)"></i><i style="background:var(--h4)"></i>
-        貴　<i style="background:var(--none)"></i> 沒有票價　（框起來的是最低價，點日期直接去訂票）</div>
+        貴　<i style="background:var(--none)"></i> 沒有票價　（框起來的是最低價；▼▲ 是比昨天便宜／貴；點日期看價格變化和訂票）</div>
+      <div class="detail" id="dayDetail" hidden></div>
       <div class="months" id="months"></div>
     </div>
   </section>
 
   <footer>
-    價格是虎航官網日曆上當天最便宜航班的票價（新台幣，tigerlight 方案，只含 10 公斤手提行李），<b>未含稅金與附加費用</b>。
-    「含稅約」是用各航線實際查過一次的「稅金與其他費用」估算，會因旺季、匯率、燃油附加費調整而有出入。實際以
+    價格是虎航官網日曆上當天最便宜航班的票價（新台幣），<b>未含稅金與附加費用</b>。
+    tigersmart、tigerpro 是用實際查到的固定加價估算（每段 +$950、+$1,600）。
+    「含稅約」是用各航線實際查過一次的「稅金與其他費用」估算，會因旺季、匯率、燃油附加費調整而有出入。
+    價格變化是每天記一次當天看到的最低價，「比昨天」就是和前一天的最低價比較。實際以
     <a href="https://www.tigerairtw.com/" target="_blank" rel="noopener noreferrer">虎航官網</a>訂票頁為準。
     資料每小時由 GitHub Actions 自動更新。
   </footer>
@@ -152,6 +178,26 @@ let D = null;          // fares.json
 let dates = [];        // 第 i 天的日期字串
 let cities = {};       // city -> { label, country, codes: [] }
 let TAX = {};          // taxes.json 的 legs："TPE-OKA" -> 稅金與其他費用
+let BUNDLES = { tigerlight: 0 }; // taxes.json 的 bundles：各方案每段比 tigerlight 多的錢
+let HIST = null;       // history.json：routes["TPE-OKA"]["2026-11-03"] = [["2026-10-04", 1799], ...]
+
+const plan = () => $("plan").value;
+const B = () => BUNDLES[plan()] ?? 0;   // 目前方案每段要加的錢
+
+/** 某航線某出發日，昨天（含）以前最後記錄的價格；沒有紀錄回傳 undefined */
+function yesterdayPrice(key, date) {
+  const today = D.updated.slice(0, 10);
+  let p;
+  for (const [day, v] of HIST?.routes?.[key]?.[date] ?? []) if (day < today) p = v;
+  return p;
+}
+/** 和昨天比的差額（數字），沒辦法比較時回傳 null */
+function changeVsYesterday(key, date, now) {
+  const y = yesterdayPrice(key, date);
+  return y == null || now == null ? null : now - y;
+}
+const chgHtml = (diff) => diff == null || diff === 0 ? "" :
+  `<span class="chg ${diff < 0 ? "down" : "up"}">${diff < 0 ? "▼" : "▲"}${fmt(Math.abs(diff))}</span>`;
 
 /** 虎航訂票頁網址（同機場來回用 roundTrip，不同機場用 multiCity） */
 function bookUrl(outKey, depDate, inKey, retDate) {
@@ -178,7 +224,8 @@ function setup() {
     const c = (cities[a.city] ??= { label: a.city === code ? a.name : a.city, country: a.country, codes: [] });
     c.codes.push(code);
   }
-  $("meta").textContent = `更新時間 ${D.updated}（台北）・出發日 ${D.from} ～ ${D.to}・共 ${Object.keys(D.prices).length} 條航線`;
+  $("meta").textContent = `更新時間 ${D.updated}（台北）・出發日 ${D.from} ～ ${D.to}・共 ${Object.keys(D.prices).length} 條航線` +
+    (HIST?.since ? `・價格變化從 ${HIST.since.slice(0, 10)} 開始記錄` : "");
   for (const id of ["earliest", "latest"]) { $(id).min = D.from; $(id).max = D.to; }
 
   const sorted = Object.entries(cities).sort((a, b) => a[1].country.localeCompare(b[1].country) || a[1].label.localeCompare(b[1].label, "zh-Hant"));
@@ -211,16 +258,24 @@ function combosFor(cityKey, f) {
         for (const y of codes) {
           const back = D.prices[`${y}-${D.origin}`]?.[j];
           if (back == null) continue;
-          const total = go[i] + back;
-          const goT = withTax(`${D.origin}-${x}`, go[i]), backT = withTax(`${y}-${D.origin}`, back);
+          const goP = go[i] + B(), backP = back + B();
+          const total = goP + backP;
+          const goT = withTax(`${D.origin}-${x}`, goP), backT = withTax(`${y}-${D.origin}`, backP);
           // 有稅費資料就用含稅價比較，沒有就用票價
           const all = goT != null && backT != null ? goT + backT : null;
-          out.push({ city: cityKey, x, y, i, j, n, go: go[i], back, total, all, cmp: all ?? total });
+          out.push({ city: cityKey, x, y, i, j, n, go: goP, back: backP, raw: go[i] + back, total, all, cmp: all ?? total });
         }
       }
     }
   }
   return out;
+}
+
+function renderPlanNote() {
+  const extra = B();
+  $("planNote").innerHTML = `價格是 1 位成人、每天最便宜那一班的 <b>${esc(plan())}</b> 價格` +
+    (extra ? `（tigerlight 票價每段加 <b>${fmt(extra)}</b> 估算）` : "（最便宜的基本票，<b>不含託運行李、選位、餐點</b>）") +
+    "。來回表格的 ▼▲ 是和昨天比便宜或變貴多少。";
 }
 
 function renderTrips() {
@@ -248,10 +303,14 @@ function renderTrips() {
     const place = c.x === c.y ? apName(c.x) : `${apName(c.x)}去・${apName(c.y)}回`;
     const outKey = `${D.origin}-${c.x}`, inKey = `${c.y}-${D.origin}`;
     const url = bookUrl(outKey, dates[c.i], inKey, dates[c.j]);
+    // 和昨天比：兩段都有昨天的紀錄才比較（方案加價、稅費兩天都一樣，只比票價）
+    const dGo = changeVsYesterday(outKey, dates[c.i], c.go - B());
+    const dBack = changeVsYesterday(inKey, dates[c.j], c.back - B());
+    const diff = dGo != null && dBack != null ? dGo + dBack : null;
     return `<tr data-city="${esc(c.city)}" data-code="${c.x}">
       <td>${esc(place)}</td>
       <td class="num">${fmt(c.total)}</td>
-      <td class="num price">${c.all != null ? fmt(c.all) : '<span class="sub">—</span>'}</td>
+      <td class="num price">${c.all != null ? fmt(c.all) : '<span class="sub">—</span>'}${diff ? `<br>${chgHtml(diff)}` : ""}</td>
       <td>${dayLabel(dates[c.i])} <span class="sub">${fmt(c.go)}</span></td>
       <td>${dayLabel(dates[c.j])} <span class="sub">${fmt(c.back)}</span></td>
       <td class="num">${c.n}</td>
@@ -266,6 +325,11 @@ $("tripBody").addEventListener("click", (e) => {
   else { $("calDest").value = tr.dataset.code; setDir(true); showTab("cal"); }
 });
 for (const id of ["minDays", "maxDays", "earliest", "latest", "country", "city"]) $(id).addEventListener("input", renderTrips);
+$("plan").addEventListener("input", () => {
+  try { localStorage.setItem("plan", plan()); } catch {}
+  renderPlanNote(); renderTrips();
+  if (!$("tab-cal").hidden) renderCal();
+});
 
 /* ---------------- 日曆 ---------------- */
 
@@ -291,10 +355,12 @@ function renderCal() {
   const low = D.lows?.[key];
   const route = outbound ? `桃園 → ${apName(code)}` : `${apName(code)} → 桃園`;
   $("calStats").innerHTML = !vals.length ? `<span>${esc(route)}：目前沒有票價資料</span>` :
-    `<span>${esc(route)}（tigerlight）</span><span>目前最低 <b>${fmt(min)}</b></span>` +
-    (low ? `<span>歷史最低 ${fmt(low.price)}（${low.date}）</span>` : "") +
-    (TAX[key] != null ? `<span>稅費約 ${fmt(TAX[key])}（含稅最低約 <b>${fmt(min + TAX[key])}</b>）</span>` : "") +
+    `<span>${esc(route)}（${esc(plan())}）</span><span>目前最低 <b>${fmt(min + B())}</b></span>` +
+    (low ? `<span>歷史最低 ${fmt(low.price + B())}（${low.date}）</span>` : "") +
+    (TAX[key] != null ? `<span>稅費約 ${fmt(TAX[key])}（含稅最低約 <b>${fmt(min + B() + TAX[key])}</b>）</span>` : "") +
     `<span>有票價 ${vals.length} 天</span>`;
+  calKey = key;
+  if (selDay != null) showDay(selDay); else $("dayDetail").hidden = true;
 
   const months = {};
   dates.forEach((d, i) => (months[d.slice(0, 7)] ??= []).push(i));
@@ -306,14 +372,58 @@ function renderCal() {
     cells += '<div class="day blank"></div>'.repeat(lead);
     for (const i of idx) {
       const v = arr[i], d = Number(dates[i].slice(8));
+      const diff = changeVsYesterday(key, dates[i], v);
+      const mark = diff ? `<small>${diff < 0 ? "▼" : "▲"}</small>` : "";
+      const p = v == null ? null : v + B();
       cells += v == null
         ? `<div class="day"><span class="d">${d}</span><span class="p">—</span></div>`
-        : `<a class="day has${v === min ? " best" : ""}" style="background:${heat(v)}" href="${esc(bookUrl(key, dates[i]))}" target="_blank" rel="noopener noreferrer" title="${dates[i]} ${fmt(v)}${TAX[key] != null ? `（含稅約 ${fmt(v + TAX[key])}）` : ""}，點擊去訂票"><span class="d">${d}</span><span class="p">${(v / 1000).toFixed(1)}k</span></a>`;
+        : `<button type="button" class="day has${v === min ? " best" : ""}${i === selDay ? " sel" : ""}" data-i="${i}" style="background:${heat(v)}" title="${dates[i]} ${fmt(p)}${TAX[key] != null ? `（含稅約 ${fmt(p + TAX[key])}）` : ""}"><span class="d">${d}</span><span class="p">${(p / 1000).toFixed(1)}k${mark}</span></button>`;
     }
     const [y, m] = ym.split("-");
     return `<div class="month"><h3>${y} 年 ${Number(m)} 月</h3><div class="grid">${cells}</div></div>`;
   }).join("");
 }
+
+let calKey = null, selDay = null;
+
+/** 日曆點某一天：顯示現在價格、每天的價格變化、訂票按鈕 */
+function showDay(i) {
+  selDay = i;
+  const key = calKey, date = dates[i], v = D.prices[key]?.[i];
+  const box = $("dayDetail");
+  const [o, d] = key.split("-");
+  const route = `${o === D.origin ? "桃園" : apName(o)} → ${d === D.origin ? "桃園" : apName(d)}`;
+  const hist = (HIST?.routes?.[key]?.[date] ?? []).filter(([, p]) => p !== undefined);
+  const known = hist.map(([, p]) => p).filter((p) => p != null);
+  const items = hist.map(([day, p], k) => {
+    const prev = hist[k - 1]?.[1];
+    const diff = p != null && prev != null ? p - prev : null;
+    return `<li>${day.slice(5).replace("-", "/")}　${p == null ? "沒有票價" : fmt(p + B())} ${chgHtml(diff)}</li>`;
+  }).join("");
+  const p = v == null ? null : v + B();
+  box.innerHTML = `<h3>${esc(route)}　${dayLabel(date)}</h3>
+    <div class="row">
+      <span>現在 <span class="now">${p == null ? "沒有票價" : fmt(p)}</span></span>
+      ${p != null && TAX[key] != null ? `<span>含稅約 <b>${fmt(p + TAX[key])}</b></span>` : ""}
+      ${chgHtml(changeVsYesterday(key, date, v)) ? `<span>比昨天 ${chgHtml(changeVsYesterday(key, date, v))}</span>` : ""}
+      ${known.length ? `<span class="sub">記錄期間最低 ${fmt(Math.min(...known) + B())}、最高 ${fmt(Math.max(...known) + B())}</span>` : ""}
+      ${v != null ? `<a class="book" href="${esc(bookUrl(key, date))}" target="_blank" rel="noopener noreferrer">去訂票</a>` : ""}
+    </div>
+    ${items ? `<p class="sub" style="margin:10px 0 0">每天看到的最低價（只列出有變動的日子）：</p><ol>${items}</ol>`
+            : `<p class="sub">還沒有這一天的價格變化紀錄。</p>`}`;
+  box.hidden = false;
+  document.querySelectorAll("#months .day.sel").forEach((b) => b.classList.remove("sel"));
+  document.querySelector(`#months .day[data-i="${i}"]`)?.classList.add("sel");
+}
+
+$("months").addEventListener("click", (e) => {
+  const b = e.target.closest("button.day"); if (!b) return;
+  showDay(Number(b.dataset.i));
+  $("dayDetail").scrollIntoView({ behavior: "smooth", block: "nearest" });
+});
+$("calDest").addEventListener("input", () => (selDay = null), true);
+$("dirOut").addEventListener("click", () => (selDay = null), true);
+$("dirIn").addEventListener("click", () => (selDay = null), true);
 
 /* ---------------- 分頁 ---------------- */
 
@@ -324,12 +434,23 @@ function showTab(name) {
 }
 document.querySelectorAll(".tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 
-const taxesReady = fetch("taxes.json", { cache: "no-cache" })
-  .then((r) => (r.ok ? r.json() : null)).then((t) => { TAX = t?.legs ?? {}; }).catch(() => {});
+// 稅費和價格歷史載入失敗也沒關係，只是少了那些欄位
+const optional = (url) => fetch(url, { cache: "no-cache" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+const extrasReady = Promise.all([optional("taxes.json"), optional("history.json")]).then(([t, h]) => {
+  TAX = t?.legs ?? {};
+  BUNDLES = { tigerlight: 0, ...(t?.bundles ?? {}) };
+  for (const o of $("plan").options) o.disabled = BUNDLES[o.value] == null;
+  HIST = h;
+});
+try { const saved = localStorage.getItem("plan"); if (saved) $("plan").value = saved; } catch {}
 
 fetch("fares.json", { cache: "no-cache" })
   .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
-  .then(async (data) => { D = data; await taxesReady; setup(); renderTrips(); })
+  .then(async (data) => {
+    D = data; await extrasReady;
+    if ($("plan").selectedOptions[0]?.disabled) $("plan").value = "tigerlight";
+    setup(); renderPlanNote(); renderTrips();
+  })
   .catch((e) => { $("meta").textContent = "票價資料載入失敗（" + e.message + "），請稍後重新整理。"; });
 </script>
 </body>

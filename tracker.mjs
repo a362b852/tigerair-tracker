@@ -59,6 +59,7 @@ const REPORT_FILE = new URL("./REPORT.md", import.meta.url);
 const TRIPS_FILE = new URL("./trips.json", import.meta.url);
 const SITE_DIR = new URL("./docs/", import.meta.url);
 const SITE_DATA_FILE = new URL("./docs/fares.json", import.meta.url);
+const HISTORY_FILE = new URL("./docs/history.json", import.meta.url);
 
 const args = process.argv.slice(2);
 const DRY = args.includes("--dry");
@@ -344,6 +345,41 @@ function buildSiteData(legs, state, from, to, stamp) {
   return { updated: stamp, from, to, origin: ORIGIN, airports, prices, lows };
 }
 
+/**
+ * 價格歷史：每條航線、每個出發日期，每天記一筆「當天看到的最低價」[日期, 價格]，
+ * 和前一天相同就不記。票價常在幾小時內跳動又回到原價（座位被暫時保留又釋出），
+ * 用每日最低價可以濾掉這些雜訊，也讓檔案不會太大。
+ * 價格 null 代表那天整天都沒在日曆上看到票價（可能售完或停飛）。
+ * 這次沒抓到的航線不動，避免抓取失敗被誤記成售完；已經過去的出發日期會刪掉。
+ */
+function updateHistory(legs, from, today, stamp) {
+  const h = existsSync(HISTORY_FILE) ? JSON.parse(readFileSync(HISTORY_FILE, "utf8")) : { since: stamp, routes: {} };
+  for (const key of Object.keys(legs)) {
+    const r = (h.routes[key] ??= {});
+    for (const date of new Set([...Object.keys(r), ...Object.keys(legs[key])])) {
+      if (date < from) continue;
+      const cur = legs[key][date] ?? null;
+      const arr = r[date] ?? [];
+      if (arr.at(-1)?.[0] === today) {
+        // 今天已經有紀錄：保留今天看到的最低價
+        const last = arr.at(-1);
+        if (cur !== null) last[1] = last[1] === null ? cur : Math.min(last[1], cur);
+      } else {
+        // 新的一天：前一天的最低價如果和更早一天相同，那筆是多餘的
+        if (arr.length >= 2 && arr.at(-1)[1] === arr.at(-2)[1]) arr.pop();
+        if (arr.length ? arr.at(-1)[1] !== cur : cur !== null) arr.push([today, cur]);
+      }
+      if (arr.length) r[date] = arr;
+    }
+  }
+  for (const key of Object.keys(h.routes)) {
+    for (const date of Object.keys(h.routes[key])) if (date < from) delete h.routes[key][date];
+    if (!Object.keys(h.routes[key]).length) delete h.routes[key];
+  }
+  h.updated = stamp;
+  return h;
+}
+
 function newLowMessage(newLows, tripLows, owner) {
   const lines = [ISSUE_MARKER, `@${owner} **偵測到新低價**`, ""];
   for (const n of [...tripLows].sort((a, b) => a.total - b.total)) {
@@ -448,6 +484,7 @@ async function main() {
   writeFileSync(REPORT_FILE, report + "\n");
   mkdirSync(SITE_DIR, { recursive: true });
   writeFileSync(SITE_DATA_FILE, JSON.stringify(buildSiteData(legs, state, from, to, `${today} ${tp.time}`)) + "\n");
+  writeFileSync(HISTORY_FILE, JSON.stringify(updateHistory(legs, from, today, `${today} ${tp.time}`)) + "\n");
   if (notifyError) throw new Error(`通知失敗：${notifyError.message}`);
 }
 

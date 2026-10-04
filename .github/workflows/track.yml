@@ -47,7 +47,7 @@ jobs:
           set -euo pipefail
           git config user.name "fare-tracker-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/state.json REPORT.md docs/fares.json 2>/dev/null || true
+          git add data/state.json REPORT.md docs/fares.json docs/history.json 2>/dev/null || true
           if git diff --cached --quiet; then echo "沒有變動"; exit 0; fi
           git commit -q -m "更新票價 $(TZ=Asia/Taipei date '+%m-%d %H:%M')"
           for i in 1 2 3; do

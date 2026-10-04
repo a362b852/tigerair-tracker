@@ -17,6 +17,8 @@
 | `REPORT.md` | 票價表（自動產生） |
 | `docs/index.html` | 網站（GitHub Pages） |
 | `docs/fares.json` | 網站用的票價資料（自動產生） |
+| `docs/history.json` | 每個出發日期每天的最低價，只記有變動的日子（自動產生） |
+| `docs/taxes.json` | 手動查的各航段稅費、託運行李方案加價 |
 
 ## 安全
 
