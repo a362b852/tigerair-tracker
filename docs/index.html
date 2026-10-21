@@ -49,6 +49,14 @@
   .tabs button[aria-selected="true"] { color: var(--accent); border-color: var(--accent); }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
   .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  .date-field { position: relative; display: flex; }
+  .date-field input[type="text"] { padding-right: 34px; }
+  .date-field .pick { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); border: 0; background: none;
+    cursor: pointer; font-size: 1rem; padding: 4px 6px; line-height: 1; }
+  .date-field .native { position: absolute; right: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; padding: 0; border: 0; }
+  input.bad { border-color: var(--bad); }
+  .date-msg { grid-column: 1 / -1; margin: 0; font-size: .8125rem; color: var(--accent); }
+  .date-msg.err { color: var(--bad); font-weight: 600; }
   label { display: flex; flex-direction: column; gap: 4px; font-size: .8125rem; color: var(--muted); }
   input, select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line);
     border-radius: 8px; padding: 7px 9px; width: 100%; min-width: 0; }
@@ -122,10 +130,11 @@
     <div class="card controls">
       <label>最少天數<input type="number" id="minDays" min="2" max="30" value="4"></label>
       <label>最多天數<input type="number" id="maxDays" min="2" max="30" value="6"></label>
-      <label>最早出發<input type="date" id="earliest"></label>
-      <label>最晚出發<input type="date" id="latest"></label>
+      <label>最早出發<span class="date-field"><input type="text" id="earliest" placeholder="不限，例 2026/11/01" autocomplete="off"><button type="button" class="pick" data-for="earliest" aria-label="從日曆選最早出發日">📅</button><input type="date" class="native" data-for="earliest" tabindex="-1" aria-hidden="true"></span></label>
+      <label>最晚出發<span class="date-field"><input type="text" id="latest" placeholder="不限，例 2026/11/30" autocomplete="off"><button type="button" class="pick" data-for="latest" aria-label="從日曆選最晚出發日">📅</button><input type="date" class="native" data-for="latest" tabindex="-1" aria-hidden="true"></span></label>
       <label>國家<select id="country"><option value="">全部</option><option value="JP">日本</option><option value="KR">韓國</option></select></label>
       <label>目的地<select id="city"></select></label>
+      <p class="date-msg" id="dateMsg" hidden></p>
     </div>
     <div class="card">
       <p class="sub" id="tripHint" style="margin-top:0"></p>
@@ -226,7 +235,7 @@ function setup() {
   }
   $("meta").textContent = `更新時間 ${D.updated}（台北）・出發日 ${D.from} ～ ${D.to}・共 ${Object.keys(D.prices).length} 條航線` +
     (HIST?.since ? `・價格變化從 ${HIST.since.slice(0, 10)} 開始記錄` : "");
-  for (const id of ["earliest", "latest"]) { $(id).min = D.from; $(id).max = D.to; }
+  for (const n of document.querySelectorAll("input.native")) { n.min = D.from; n.max = D.to; }
 
   const sorted = Object.entries(cities).sort((a, b) => a[1].country.localeCompare(b[1].country) || a[1].label.localeCompare(b[1].label, "zh-Hant"));
   $("city").innerHTML = '<option value="">全部（每個目的地最便宜）</option>' +
@@ -237,11 +246,48 @@ function setup() {
 
 /* ---------------- 來回 ---------------- */
 
+/**
+ * 解析使用者輸入的日期。不用瀏覽器原生的日期欄位，因為輸入不存在的日期（例如 11/31）時，
+ * 原生欄位的值會變成空白而且沒有任何錯誤提示，條件就會被默默忽略。
+ * 接受 2026/11/30、2026-11-30、20261130、11/30（自動補年份）。
+ * 日超過當月天數就改成月底；月份或格式錯誤回傳 error。
+ */
+function parseDate(text) {
+  const t = text.trim();
+  if (!t) return { value: "" };
+  const m = t.match(/^(\d{4})(\d{2})(\d{2})$/) || t.match(/^(?:(\d{4})\D+)?(\d{1,2})\D+(\d{1,2})\D*$/);
+  if (!m) return { error: `看不懂「${t}」，請輸入像 2026/11/30 這樣的日期` };
+  let [, y, mo, d] = m.map((x) => (x == null ? null : Number(x)));
+  if (mo < 1 || mo > 12) return { error: `「${t}」的月份不對` };
+  if (d < 1) return { error: `「${t}」的日期不對` };
+  const pad = (n) => String(n).padStart(2, "0");
+  if (y == null) {
+    // 沒寫年份：取出發日範圍內的那一年
+    y = Number(D.from.slice(0, 4));
+    if (`${y}-${pad(mo)}-${pad(Math.min(d, 28))}` < D.from.slice(0, 8) + "01") y++;
+  }
+  const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  const note = d > last ? `${mo} 月只有 ${last} 天，已改成 ${y}/${pad(mo)}/${pad(last)}` : "";
+  return { value: `${y}-${pad(mo)}-${pad(Math.min(d, last))}`, note };
+}
+const showDate = (iso) => iso.replaceAll("-", "/");
+
 function readTripForm() {
   let min = Math.max(2, Math.min(30, parseInt($("minDays").value) || 2));
   let max = Math.max(2, Math.min(30, parseInt($("maxDays").value) || min));
   if (min > max) [min, max] = [max, min];
-  return { min, max, earliest: $("earliest").value || D.from, latest: $("latest").value || D.to,
+  const msgs = [], errs = [];
+  const range = {};
+  for (const [id, label, fallback] of [["earliest", "最早出發", D.from], ["latest", "最晚出發", D.to]]) {
+    const r = parseDate($(id).value);
+    $(id).classList.toggle("bad", !!r.error);
+    if (r.error) errs.push(`${label}：${r.error}`);
+    const note = r.note || $(id).dataset.note;   // 自動修正過的提示，文字框改好之後也要繼續顯示
+    if (note) msgs.push(`${label}：${note}`);
+    range[id] = r.value || fallback;
+  }
+  if (!errs.length && range.earliest > range.latest) errs.push("最早出發晚於最晚出發，請檢查日期");
+  return { min, max, earliest: range.earliest, latest: range.latest, msgs, errs,
     country: $("country").value, city: $("city").value };
 }
 
@@ -280,8 +326,15 @@ function renderPlanNote() {
 
 function renderTrips() {
   const f = readTripForm();
+  const msg = $("dateMsg");
+  msg.hidden = !f.errs.length && !f.msgs.length;
+  msg.className = "date-msg" + (f.errs.length ? " err" : "");
+  msg.textContent = (f.errs.length ? f.errs : f.msgs).join("　");
   let rows = [];
-  if (f.city) {
+  if (f.errs.length) {
+    // 日期有錯就不要顯示結果，避免條件被忽略卻看不出來
+    $("tripHint").textContent = "日期有誤，請先修正上面的日期";
+  } else if (f.city) {
     // 單一城市：同一組日期只留最便宜的機場組合，列出前 30 名
     const seen = new Set();
     for (const c of combosFor(f.city, f).sort((a, b) => a.cmp - b.cmp || a.i - b.i)) {
@@ -324,7 +377,29 @@ $("tripBody").addEventListener("click", (e) => {
   if (!$("city").value) { $("city").value = tr.dataset.city; renderTrips(); window.scrollTo({ top: 0, behavior: "smooth" }); }
   else { $("calDest").value = tr.dataset.code; setDir(true); showTab("cal"); }
 });
-for (const id of ["minDays", "maxDays", "earliest", "latest", "country", "city"]) $(id).addEventListener("input", renderTrips);
+for (const id of ["minDays", "maxDays", "country", "city"]) $(id).addEventListener("input", renderTrips);
+// 日期文字框：打完（離開欄位或按 Enter）才套用，並把格式整理成 2026/11/30
+for (const id of ["earliest", "latest"]) {
+  $(id).addEventListener("change", () => {
+    const r = parseDate($(id).value);
+    $(id).dataset.note = r.note || "";
+    if (r.value) $(id).value = showDate(r.value);
+    renderTrips();
+  });
+}
+// 日曆按鈕：打開隱藏的原生日期選擇器，選完填回文字框
+for (const btn of document.querySelectorAll(".date-field .pick")) {
+  const text = $(btn.dataset.for), native = btn.parentElement.querySelector("input.native");
+  btn.addEventListener("click", () => {
+    native.value = parseDate(text.value).value || "";
+    try { native.showPicker(); } catch { native.focus(); native.click(); }
+  });
+  native.addEventListener("change", () => {
+    text.value = native.value ? showDate(native.value) : "";
+    text.dataset.note = "";
+    renderTrips();
+  });
+}
 $("plan").addEventListener("input", () => {
   try { localStorage.setItem("plan", plan()); } catch {}
   renderPlanNote(); renderTrips();
